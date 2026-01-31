@@ -1,0 +1,160 @@
+# 🚨 Critical Issue: Authentication Flow Blocked
+
+**Date:** 2026-01-31  
+**Reporter:** Frontend Team  
+**Priority:** **HIGH** — Blocks all user registration and authentication testing
+
+---
+
+## Summary
+
+The `/auth/signup` endpoint does not return the `userId`, which is **required** by the `/auth/verify-otp` endpoint. This breaks the entire registration flow for new users.
+
+---
+
+## The Problem
+
+### Current Signup Response
+
+```http
+POST /api/v1/auth/signup
+```
+
+**Request:**
+```json
+{
+  "email": "user@example.com",
+  "password": "SecurePass123@"
+}
+```
+
+**Current Response (201 Created):**
+```json
+{
+  "message": "Signup created. Verify your email with the OTP sent."
+}
+```
+
+### What Verify-OTP Requires
+
+```http
+POST /api/v1/auth/verify-otp
+```
+
+**Request:**
+```json
+{
+  "userId": "550e8400-e29b-41d4-a716-446655440000",  // ❌ WHERE DO WE GET THIS?
+  "code": "123456"
+}
+```
+
+---
+
+## Why This is a Problem
+
+```
+┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
+│  1. User Signs  │      │  2. User Gets   │      │  3. User Tries  │
+│      Up         │ ───► │   OTP Email     │ ───► │   to Verify     │
+│                 │      │                 │      │                 │
+│ Returns:        │      │ Has: code       │      │ Needs: userId   │
+│ { message }     │      │                 │      │        + code   │
+│                 │      │                 │      │                 │
+│ ❌ No userId    │      │                 │      │ ❌ BLOCKED!     │
+└─────────────────┘      └─────────────────┘      └─────────────────┘
+```
+
+**Result:** User can never verify their email → Account stays inactive → User can never log in.
+
+---
+
+## Cascading Impact
+
+| Feature | Status | Reason |
+|---------|--------|--------|
+| **Signup** | ⚠️ Partial | Creates account but leads to dead end |
+| **Verify Email** | ❌ Blocked | Cannot call without `userId` |
+| **Login** | ❌ Blocked | Account is never activated |
+| **Forgot Password** | ❌ Blocked | `reset-password` also requires `userId` |
+| **All authenticated features** | ❌ Blocked | No way to get access tokens |
+
+---
+
+## Requested Fix
+
+Please modify the `/auth/signup` endpoint to return the user information in the response.
+
+### Option A: Return user object (Recommended)
+
+```json
+{
+  "message": "Signup created. Verify your email with the OTP sent.",
+  "user": {
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "email": "user@example.com"
+  }
+}
+```
+
+### Option B: Return just the userId
+
+```json
+{
+  "message": "Signup created. Verify your email with the OTP sent.",
+  "userId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+---
+
+## Secondary Issue: Reset Password
+
+The same problem exists for the password reset flow:
+
+1. `/auth/forgot-password` only returns: `{"message": "If that email exists, a reset OTP has been sent."}`
+2. `/auth/reset-password` requires: `userId`, `code`, `password`
+
+**Suggestion:** Either:
+- Make `forgot-password` return the `userId`, OR
+- Change `reset-password` to accept `email` instead of `userId`
+
+---
+
+## Additional Issue: Google OAuth
+
+```http
+POST /api/v1/auth/google
+```
+
+Currently returns:
+```json
+{
+  "error": "Google OAuth not configured"
+}
+```
+**Status Code:** 500 Internal Server Error
+
+This needs to be configured on the backend for Google Sign-In to work.
+
+---
+
+## Summary of Required Backend Changes
+
+| Priority | Endpoint | Change Needed |
+|----------|----------|---------------|
+| 🔴 HIGH | `POST /auth/signup` | Return `userId` (or full user object) in response |
+| 🟠 MEDIUM | `POST /auth/forgot-password` | Return `userId` OR change `reset-password` to use `email` |
+| 🟡 LOW | `POST /auth/google` | Configure Google OAuth credentials |
+
+---
+
+## Questions for Backend Team
+
+1. Can you add the `userId` to the signup response?
+2. For password reset: would you prefer to return `userId` from `forgot-password`, or change `reset-password` to accept `email` instead?
+3. When will Google OAuth be configured?
+
+---
+
+*Please let me know if you need any clarification or have questions about the frontend implementation.*
